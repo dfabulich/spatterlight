@@ -5,6 +5,7 @@
 #import "GlkController+BorderColor.h"
 #import "Theme.h"
 #import "GlkStyle.h"
+#import "GlkCSSBasic.h"
 #import "ZColor.h"
 #import "NSColor+integer.h"
 #import "MarginContainer.h"
@@ -89,6 +90,18 @@
             attributes = ((GlkStyle *)[self.theme valueForKey:gBufferStyleNames[i]]).attributeDict;
         }
 
+        NSMutableDictionary *mutableAttrs = [attributes mutableCopy] ?: [NSMutableDictionary dictionary];
+        BOOL cssReverse = NO;
+        [self applyCSSHintsToAttributes:mutableAttrs forStyle:i reverseOut:&cssReverse];
+        if (cssReverse) {
+            mutableAttrs[@"ReverseVideo"] = @(YES);
+            NSArray *hintsForStyle = self.styleHints[i];
+            if (!hintsForStyle.count || [hintsForStyle[stylehint_ReverseColor] isNotEqualTo:@(1)]) {
+                mutableAttrs = [self reversedAttributes:mutableAttrs background:self.theme.bufferBackground];
+            }
+        }
+        attributes = mutableAttrs;
+
         if (usingStyles != self.theme.doStyles) {
             different = YES;
             usingStyles = self.theme.doStyles;
@@ -168,7 +181,13 @@
             id styleobject = attrs[@"GlkStyle"];
             if (styleobject) {
                 NSDictionary *stylesAtt = blockStyles[(NSUInteger)[styleobject intValue]];
-                [backingStorage setAttributes:stylesAtt range:range];
+                NSMutableDictionary *restored = [stylesAtt mutableCopy];
+                id glkCSS = attrs[@"GlkCSS"];
+                if (glkCSS) {
+                    restored[@"GlkCSS"] = glkCSS;
+                    [self applyPreservedInlineCSS:glkCSS toAttributes:restored];
+                }
+                [backingStorage setAttributes:restored range:range];
             }
 
             // Then, we re-add all the "non-Glk" style values we want to keep
@@ -199,6 +218,13 @@
             if (reverse) {
                 [backingStorage addAttribute:@"ReverseVideo"
                                        value:reverse
+                                       range:range];
+            }
+
+            id glkCSSKeep = attrs[@"GlkCSS"];
+            if (glkCSSKeep) {
+                [backingStorage addAttribute:@"GlkCSS"
+                                       value:glkCSSKeep
                                        range:range];
             }
         }];

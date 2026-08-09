@@ -20,6 +20,7 @@
 #import "NSString+Categories.h"
 #import "Theme.h"
 #import "GlkStyle.h"
+#import "GlkCSSBasic.h"
 #import "Constants.h"
 #import "Game.h"
 #import "Metadata.h"
@@ -85,6 +86,8 @@
         NSDictionary *styleDict = nil;
 
         self.styleHints = [GlkWindow deepCopyOfStyleHintsArray:glkctl_.gridStyleHints];
+        self.cssSpanHints = [GlkCSSBasic deepCopyOfCSSHintArray:glkctl_.gridCssSpanHints];
+        self.cssParaHints = [GlkCSSBasic deepCopyOfCSSHintArray:glkctl_.gridCssParaHints];
 
         styles = [NSMutableArray arrayWithCapacity:style_NUMSTYLES];
         for (NSUInteger i = 0; i < style_NUMSTYLES; i++) {
@@ -343,6 +346,18 @@
             attributes = ((GlkStyle *)[self.theme valueForKey:gGridStyleNames[i]]).attributeDict;
         }
 
+        NSMutableDictionary *mutableAttrs = [attributes mutableCopy] ?: [NSMutableDictionary dictionary];
+        BOOL cssReverse = NO;
+        [self applyCSSHintsToAttributes:mutableAttrs forStyle:i reverseOut:&cssReverse];
+        if (cssReverse) {
+            mutableAttrs[@"ReverseVideo"] = @(YES);
+            NSArray *hintsForStyle = self.styleHints[i];
+            if (!hintsForStyle.count || [hintsForStyle[stylehint_ReverseColor] isNotEqualTo:@(1)]) {
+                mutableAttrs = [self reversedAttributes:mutableAttrs background:self.theme.gridBackground];
+            }
+        }
+        attributes = mutableAttrs;
+
         if (usingStyles != self.theme.doStyles) {
             different = YES;
             usingStyles = self.theme.doStyles;
@@ -386,7 +401,13 @@
             id styleobject = attrs[@"GlkStyle"];
             if (styleobject) {
                 NSDictionary *blockattributes = blockStyles[(NSUInteger)[styleobject intValue]];
-                [weakSelf.bufferTextStorage setAttributes:blockattributes range:range];
+                NSMutableDictionary *restored = [blockattributes mutableCopy];
+                id glkCSS = attrs[@"GlkCSS"];
+                if (glkCSS) {
+                    restored[@"GlkCSS"] = glkCSS;
+                    [weakSelf applyPreservedInlineCSS:glkCSS toAttributes:restored];
+                }
+                [weakSelf.bufferTextStorage setAttributes:restored range:range];
             }
             // Then, we re-add all the "non-Glk" style values we want to keep
             // (hyperlinks, Z-colors and reverse video)
@@ -408,6 +429,13 @@
             if (reverse) {
                 [weakSelf.bufferTextStorage addAttribute:@"ReverseVideo"
                                                    value:reverse
+                                                   range:range];
+            }
+
+            id glkCSSKeep = attrs[@"GlkCSS"];
+            if (glkCSSKeep) {
+                [weakSelf.bufferTextStorage addAttribute:@"GlkCSS"
+                                                   value:glkCSSKeep
                                                    range:range];
             }
 
