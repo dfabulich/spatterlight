@@ -3601,6 +3601,21 @@ a5text_render_plain (const char *src)
           }
           if (strcmp (name, "br") == 0)
             sb_putc (&sb, '\n');
+          else if (strcmp (name, "del") == 0)
+            {
+              /* Delete the previous output glyph (ADRIFT TextBoxes <del>).
+                 In-fragment when a glyph is present (style marks and newlines
+                 stay mutable -- including ALR rewrites that undo a paragraph
+                 break).  Otherwise leave A5_DEL_MARK for sb_resolve_del on the
+                 turn buffer, matching the Runner's whole-turn sOutputText
+                 backspace (Execute-Task / "(standing up first)" ALR).  A
+                 successful delete leaves A5_ALR_MARK so boundary ALRs cannot
+                 match across the former tag site. */
+              if (sb_del_glyph (&sb))
+                sb_putc (&sb, A5_ALR_MARK);
+              else
+                sb_putc (&sb, A5_DEL_MARK);
+            }
           else if (strcmp (name, "cls") == 0)
             {
               /* Screen clear: drop everything buffered so far in THIS fragment,
@@ -3784,7 +3799,7 @@ a5text_strip_pres_marks (char *s)
             r = (char *) e;
           continue;
         }
-      if (*r == A5_ALR_MARK || *r == A5_WAITKEY_MARK
+      if (*r == A5_ALR_MARK || *r == A5_DEL_MARK || *r == A5_WAITKEY_MARK
           || *r == A5_CENTER_MARK || *r == A5_ENDCENTER_MARK
           || *r == A5_BOLD_MARK || *r == A5_ENDBOLD_MARK
           || *r == A5_ITALIC_MARK || *r == A5_ENDITALIC_MARK
