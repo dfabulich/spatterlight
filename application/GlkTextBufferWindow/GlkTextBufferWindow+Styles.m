@@ -39,11 +39,11 @@
             NSLog(@"recalcBackground: No theme!");
             return;
         }
-        if (!self.theme.bufferBackground) {
+        if (!self.theme.resolvedBufferBackground) {
             NSLog(@"recalcBackground: No self.theme.bufferBackground!");
             return;
         }
-        bgcolor = self.theme.bufferBackground;
+        bgcolor = self.theme.resolvedBufferBackground;
     }
     _textview.backgroundColor = bgcolor;
 

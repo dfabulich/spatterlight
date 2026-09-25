@@ -227,7 +227,7 @@
         attributes[@"ReverseVideo"] = @(YES);
         if (!self.theme.doStyles || [hintsForStyle[stylehint_ReverseColor] isNotEqualTo:@(1)]) {
             // Current style has stylehint_ReverseColor unset, so we reverse colors
-            attributes = [self reversedAttributes:attributes background:[self isKindOfClass:[GlkTextGridWindow class]] ? self.theme.gridBackground : self.theme.bufferBackground];
+            attributes = [self reversedAttributes:attributes background:[self isKindOfClass:[GlkTextGridWindow class]] ? self.theme.resolvedGridBackground : self.theme.resolvedBufferBackground];
         }
     }
 
@@ -375,9 +375,9 @@
     GlkWindow * __weak weakSelf = self;
     NSColor *blockBgCol;
     if ([self isKindOfClass:[GlkTextGridWindow class]])
-        blockBgCol = self.theme.gridBackground;
+        blockBgCol = self.theme.resolvedGridBackground;
     else
-        blockBgCol = self.theme.bufferBackground;
+        blockBgCol = self.theme.resolvedBufferBackground;
 
     if (self.theme.doStyles) {
         [attStr
@@ -449,9 +449,9 @@
     GlkWindow * __weak weakSelf = self;
     NSColor *blockBgCol;
     if ([self isKindOfClass:[GlkTextGridWindow class]])
-        blockBgCol = self.theme.gridBackground;
+        blockBgCol = self.theme.resolvedGridBackground;
     else
-        blockBgCol = self.theme.bufferBackground;
+        blockBgCol = self.theme.resolvedBufferBackground;
 
     [attStr
      enumerateAttribute:@"ReverseVideo"

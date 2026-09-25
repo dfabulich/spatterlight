@@ -77,8 +77,8 @@
     [_sampleTextView.textStorage setAttributedString:attrStr];
     [_sampleTextView.layoutManager ensureLayoutForTextContainer:_sampleTextView.textContainer];
     _textHeight.constant = NSHeight(_sampleTextView.frame);
-    _sampleTextView.backgroundColor = _theme.bufferBackground;
-    self.view.layer.backgroundColor = _theme.bufferBackground.CGColor;
+    _sampleTextView.backgroundColor = _theme.resolvedBufferBackground;
+    self.view.layer.backgroundColor = _theme.resolvedBufferBackground.CGColor;
     self.view.needsLayout = YES;
 }
 
