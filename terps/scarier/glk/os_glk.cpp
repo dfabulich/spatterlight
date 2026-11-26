@@ -1643,7 +1643,9 @@ glkunix_startup_code (glkunix_startup_t * data)
 
 #ifdef _WIN32
 
-#include <windows.h>
+#define NO_SHLWAPI_ISOS /* Avoid redefinition of OS_WINDOWS */
+#include <atlbase.h>
+#include <wincodec.h>
 
 #include "WinGlk.h"
 #include "resource.h"
@@ -1671,6 +1673,221 @@ WinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance,
   return 0;
 }
 
+/*
+ * Support for GIF format graphics
+ */
+
+struct graphic_gif
+{
+  CComPtr<IWICImagingFactory> factory;
+  CComPtr<IWICStream> stream;
+  CComPtr<IWICBitmapDecoder> decoder;
+  CComPtr<IWICBitmapFrameDecode> frame;
+  CComPtr<IWICFormatConverter> converter;
+  UINT width = 0;
+  UINT height = 0;
+};
+
+DWORD_PTR graphic_gif_create(BYTE* data, int len, int* width, int* height)
+{
+  if ((len < 6) || (memcmp(data,"GIF",3) != 0))
+    return 0;
+
+  std::unique_ptr<graphic_gif> gfx(new graphic_gif());
+
+  if (FAILED(gfx->factory.CoCreateInstance(CLSID_WICImagingFactory)))
+    return 0;
+  if (FAILED(gfx->factory->CreateStream(&(gfx->stream))))
+    return 0;
+  if (FAILED(gfx->stream->InitializeFromMemory(data,len)))
+    return 0;
+  if (FAILED(gfx->factory->CreateDecoder(GUID_ContainerFormatGif,NULL,&(gfx->decoder))))
+    return 0;
+  if (FAILED(gfx->decoder->Initialize(gfx->stream,WICDecodeMetadataCacheOnDemand)))
+    return 0;
+  if (FAILED(gfx->decoder->GetFrame(0,&(gfx->frame))))
+    return 0;
+
+  if (FAILED(gfx->frame->GetSize(&(gfx->width),&(gfx->height))))
+    return 0;
+  if ((gfx->width == 0) || (gfx->height == 0))
+    return 0;
+
+  *width = gfx->width;
+  *height = gfx->height;
+  return (DWORD_PTR)(gfx.release());
+}
+
+void graphic_gif_destroy(DWORD_PTR id)
+{
+  graphic_gif* gfx = (graphic_gif*)id;
+  delete gfx;
+}
+
+int graphic_gif_draw(DWORD_PTR id, BYTE* pixels)
+{
+  graphic_gif* gfx = (graphic_gif*)id;
+
+  CComPtr<IWICFormatConverter> converter;
+  if (FAILED(gfx->factory->CreateFormatConverter(&converter)))
+    return 0;
+  if (FAILED(converter->Initialize(gfx->frame,GUID_WICPixelFormat32bppBGRA,
+      WICBitmapDitherTypeNone,NULL,0.0,WICBitmapPaletteTypeCustom)))
+    return 0;
+
+  UINT size = gfx->width*gfx->height*4;
+  return SUCCEEDED(converter->CopyPixels(NULL,gfx->width*4,size,pixels)) ? 1 : 0;
+}
+
+/*
+ * Support for WAV format sounds
+ */
+
+unsigned short read_riff_short(const unsigned char* bytes)
+{
+  return (unsigned short)(
+    ((unsigned short)(bytes[0] & 0xFF)) |
+    ((unsigned short)(bytes[1] & 0xFF) << 8));
+}
+
+unsigned long read_riff_long(const unsigned char* bytes)
+{
+  return (unsigned long)(
+    ((unsigned long)(bytes[0] & 0xFF)) |
+    ((unsigned long)(bytes[1] & 0xFF) << 8) |
+    ((unsigned long)(bytes[2] & 0xFF) << 16) |
+    ((unsigned long)(bytes[3] & 0xFF) << 24));
+}
+
+/* Find an RIFF chunk, limiting its length to the data available */
+BYTE* find_riff_chunk(BYTE* data, int dataLen, const char* chunk, unsigned long& chunkLen)
+{
+  BYTE* ptr = data+12;
+  BYTE* end = data+dataLen;
+  while (end - ptr >= 8)
+  {
+    unsigned long size = read_riff_long(ptr+4);
+    if (strncmp((char*)ptr,chunk,4) == 0)
+    {
+      unsigned long avail = (unsigned long)(end - (ptr+8));
+      chunkLen = (size < avail) ? size : avail;
+      return ptr+8;
+    }
+
+    /* Move to the next chunk */
+    if (size >= (unsigned long)(end - ptr))
+      break;
+    ptr += size+8+(size % 2);
+  }
+  return NULL;
+}
+
+struct sound_wav
+{
+  BYTE* ptr;
+  BYTE* min;
+  BYTE* max;
+  int bytes;
+
+  sound_wav(BYTE* p, int len, int by)
+  {
+    ptr = p;
+    min = p;
+    max = p+len;
+    bytes = by;
+  }
+};
+
+DWORD_PTR sound_wav_create(BYTE* data, int len, struct winglk_sound* sound)
+{
+  if ((data == NULL) || (len < 12))
+    return 0;
+
+  /* Check for WAV header */
+  if (strncmp((char*)data,"RIFF",4) != 0)
+    return 0;
+  if (strncmp((char*)(data+8),"WAVE",4) != 0)
+    return 0;
+
+  /* Find the format chunk */
+  unsigned long length = 0;
+  BYTE* chunk = find_riff_chunk(data,len,"fmt ",length);
+  if ((chunk == NULL) || (length < 16))
+    return 0;
+
+  /* Only uncompressed PCM data is supported, either directly or
+     as the sub-format of WAVE_FORMAT_EXTENSIBLE (0xFFFE) */
+  unsigned short format = read_riff_short(chunk);
+  if ((format == 0xFFFE) && (length >= 40))
+    format = read_riff_short(chunk+24);
+  if (format != WAVE_FORMAT_PCM)
+    return 0;
+
+  /* Read in details of the sample */
+  sound->channels = read_riff_short(chunk+2);
+  sound->freq = read_riff_long(chunk+4);
+  unsigned short align = read_riff_short(chunk+12);
+  sound->bits = read_riff_short(chunk+14);
+  if ((sound->channels < 1) || (sound->channels > 2) || (sound->freq == 0))
+    return 0;
+  if ((sound->bits != 8) && (sound->bits != 16))
+    return 0;
+  if (align != (sound->channels)*(sound->bits>>3))
+    return 0;
+
+  /* Find the data chunk */
+  BYTE* sample_data = find_riff_chunk(data,len,"data",length);
+  if (sample_data == NULL)
+    return 0;
+  int samples = length / align;
+  sound->duration = (int)ceil((samples*1000.0)/(sound->freq));
+  return (DWORD_PTR)(new sound_wav(sample_data,length,(sound->bits>>3)));
+}
+
+void sound_wav_destroy(DWORD_PTR id)
+{
+  sound_wav* snd = (sound_wav*)id;
+  delete snd;
+}
+
+/* Test that the current point into the WAV buffer is valid */
+bool sound_wav_check_ptr(sound_wav* snd, int* repeat)
+{
+  if (snd->ptr >= snd->max)
+  {
+    /* Fail if this is the end of the last repeat */
+    if (*repeat == 0)
+      return false;
+
+    /* If not looping forever, decrement the repeat counter */
+    if (*repeat > 0)
+      (*repeat)--;
+
+    /* Reset the pointer */
+    snd->ptr = snd->min;
+  }
+  return true;
+}
+
+void sound_wav_play(DWORD_PTR id, unsigned char* buffer, int length, int* repeat)
+{
+  /* WAV data is already in the format DirectSound expects: unsigned
+     8-bit samples, or little-endian signed 16-bit samples. */
+  sound_wav* snd = (sound_wav*)id;
+  unsigned char silence = (snd->bytes == 1) ? 0x80 : 0x00;
+
+  for (int i = 0; i < length; i += snd->bytes)
+  {
+    if (sound_wav_check_ptr(snd,repeat))
+    {
+      CopyMemory(buffer,snd->ptr,snd->bytes);
+      snd->ptr += snd->bytes;
+    }
+    else
+      FillMemory(buffer,snd->bytes,silence);
+    buffer += snd->bytes;
+  }
+}
 
 /*
  * winglk_startup_code()
@@ -1695,6 +1912,25 @@ winglk_startup_code (const char *cmdline)
   winglk_set_about_text ("Windows Scarier " SCARIER_VERSION);
   winglk_set_gui (IDI_SCARIER);
   glk_stylehint_set (wintype_TextGrid, style_Normal, stylehint_ReverseColor, 1);
+
+  /* Enable WAV sound resources. */
+  struct winglk_sound_format WavFormat;
+  WavFormat.id = giblorb_make_id('W','A','V','E');
+  WavFormat.prefix = "snd";
+  WavFormat.ext = "wav";
+  WavFormat.create = sound_wav_create;
+  WavFormat.destroy = sound_wav_destroy;
+  WavFormat.play = sound_wav_play;
+  winglk_add_sound_format(&WavFormat);
+
+  /* Enable GIF graphic resources. */
+  struct winglk_graphic_format GifFormat;
+  GifFormat.id = giblorb_make_id('G','I','F',' ');
+  GifFormat.ext = "gif";
+  GifFormat.create = graphic_gif_create;
+  GifFormat.destroy = graphic_gif_destroy;
+  GifFormat.draw = graphic_gif_draw;
+  winglk_add_graphic_format(&GifFormat);
 
   /* Open a stream to the game. */
   filename = winglk_get_initial_filename (cmdline,
